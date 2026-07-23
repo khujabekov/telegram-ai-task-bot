@@ -53,18 +53,24 @@ class GoogleCalendarService:
 
             if not self.creds:
                 if not os.path.exists(creds_path):
-                    raise FileNotFoundError(
-                        f"Google credentials file not found at '{creds_path}'. "
-                        "Please download OAuth 2.0 Credentials from Google Cloud Console and place it there."
-                    )
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), self.scopes)
-                self.creds = flow.run_local_server(port=0)
+                    print("[Warning] No valid token or credentials.json found. Set GOOGLE_TOKEN_JSON environment variable for cloud deployment.")
+                    return
+                try:
+                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), self.scopes)
+                    self.creds = flow.run_local_server(port=0)
+                except Exception as e:
+                    print(f"[Warning] Could not run local server auth: {e}")
+                    return
 
-            # Save token for future runs
-            with open(token_path, "w", encoding="utf-8") as token_file:
-                token_file.write(self.creds.to_json())
+            if self.creds and os.path.exists(token_path):
+                try:
+                    with open(token_path, "w", encoding="utf-8") as token_file:
+                        token_file.write(self.creds.to_json())
+                except Exception:
+                    pass
 
-        self.service = build("calendar", "v3", credentials=self.creds)
+        if self.creds:
+            self.service = build("calendar", "v3", credentials=self.creds)
 
     def add_event(
         self,
@@ -83,6 +89,11 @@ class GoogleCalendarService:
             details: Optional detailed description for the event.
         """
         try:
+            if not self.service:
+                self._authenticate()
+                if not self.service:
+                    return {"status": "error", "message": "Google Calendar avtorizatsiyasi mavjud emas. GOOGLE_TOKEN_JSON environment variable kiritilganini tekshiring."}
+
             # Parse start time
             try:
                 dt_start = datetime.datetime.fromisoformat(start_time)
