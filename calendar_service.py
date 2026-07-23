@@ -20,11 +20,23 @@ class GoogleCalendarService:
         self._authenticate()
 
     def _authenticate(self):
-        """Authenticates with Google Calendar API using OAuth2."""
+        """Authenticates with Google Calendar API using OAuth2 (supports local file & cloud env vars)."""
         token_path = config.GOOGLE_TOKEN_FILE
         creds_path = config.GOOGLE_CREDENTIALS_FILE
 
-        if os.path.exists(token_path):
+        # 1. Try loading token from environment variable (useful for cloud servers like Render/Koyeb)
+        token_env = os.getenv("GOOGLE_TOKEN_JSON")
+        if token_env:
+            try:
+                import json
+                info = json.loads(token_env)
+                self.creds = Credentials.from_authorized_user_info(info, self.scopes)
+            except Exception as e:
+                print(f"[Warning] Failed to load token from GOOGLE_TOKEN_JSON env: {e}")
+                self.creds = None
+
+        # 2. Try loading token from local token.json file
+        if not self.creds and os.path.exists(token_path):
             try:
                 self.creds = Credentials.from_authorized_user_file(str(token_path), self.scopes)
             except Exception as e:
