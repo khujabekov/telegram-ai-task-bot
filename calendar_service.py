@@ -1,14 +1,15 @@
 import os
+import json
 import datetime
 import pytz
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 import config
+
 
 class GoogleCalendarService:
     def __init__(self):
@@ -21,56 +22,72 @@ class GoogleCalendarService:
 
     def _authenticate(self):
         """Authenticates with Google Calendar API using OAuth2 (supports local file & cloud env vars)."""
-        token_path = config.GOOGLE_TOKEN_FILE
-        creds_path = config.GOOGLE_CREDENTIALS_FILE
+        token_path = str(config.GOOGLE_TOKEN_FILE)
 
-        # 1. Try loading token from environment variable (useful for cloud servers like Render/Koyeb)
+        # 1. Try loading token from GOOGLE_TOKEN_JSON environment variable (Vercel/Render/cloud)
         token_env = os.getenv("GOOGLE_TOKEN_JSON")
         if token_env:
             try:
-                import json
                 info = json.loads(token_env)
                 self.creds = Credentials.from_authorized_user_info(info, self.scopes)
             except Exception as e:
-                print(f"[Warning] Failed to load token from GOOGLE_TOKEN_JSON env: {e}")
+                print(f"[Calendar] Failed to load token from GOOGLE_TOKEN_JSON env: {e}")
                 self.creds = None
 
         # 2. Try loading token from local token.json file
         if not self.creds and os.path.exists(token_path):
             try:
-                self.creds = Credentials.from_authorized_user_file(str(token_path), self.scopes)
+                self.creds = Credentials.from_authorized_user_file(token_path, self.scopes)
             except Exception as e:
-                print(f"[Warning] Failed to load token.json: {e}")
+                print(f"[Calendar] Failed to load token.json: {e}")
                 self.creds = None
 
-        if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:
+        # 3. Refresh expired token
+        if self.creds and not self.creds.valid:
+            if self.creds.expired and self.creds.refresh_token:
                 try:
                     self.creds.refresh(Request())
                 except Exception as e:
-                    print(f"[Warning] Failed to refresh token: {e}")
+                    print(f"[Calendar] Failed to refresh token: {e}")
                     self.creds = None
 
-            if not self.creds:
-                if not os.path.exists(creds_path):
-                    print("[Warning] No valid token or credentials.json found. Set GOOGLE_TOKEN_JSON environment variable for cloud deployment.")
-                    return
+        # 4. If still no valid creds, try local OAuth flow (only works on local machine, not serverless)
+        if not self.creds:
+            creds_path = str(config.GOOGLE_CREDENTIALS_FILE)
+            if os.path.exists(creds_path) and not config.IS_SERVERLESS:
                 try:
-                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), self.scopes)
+                    from google_auth_oauthlib.flow import InstalledAppFlow
+                    flow = InstalledAppFlow.from_client_secrets_file(creds_path, self.scopes)
                     self.creds = flow.run_local_server(port=0)
                 except Exception as e:
-                    print(f"[Warning] Could not run local server auth: {e}")
+                    print(f"[Calendar] Could not run local server auth: {e}")
                     return
+            else:
+                print("[Calendar] No valid credentials. Set GOOGLE_TOKEN_JSON environment variable for cloud deployment.")
+                return
 
-            if self.creds and os.path.exists(token_path):
-                try:
-                    with open(token_path, "w", encoding="utf-8") as token_file:
-                        token_file.write(self.creds.to_json())
-                except Exception:
-                    pass
-
+        # 5. Save token locally for future use (if writable)
         if self.creds:
+            try:
+                with open(token_path, "w", encoding="utf-8") as f:
+                    f.write(self.creds.to_json())
+            except Exception:
+                pass  # Read-only filesystem on Vercel - ignore
+
+        # 6. Build calendar service
+        if self.creds and self.creds.valid:
             self.service = build("calendar", "v3", credentials=self.creds)
+        elif self.creds:
+            # Token might be refreshable on first API call
+            self.service = build("calendar", "v3", credentials=self.creds)
+
+    def _ensure_service(self) -> Optional[str]:
+        """Ensures calendar service is ready. Returns error message if not."""
+        if not self.service:
+            self._authenticate()
+            if not self.service:
+                return "Google Calendar avtorizatsiyasi mavjud emas. GOOGLE_TOKEN_JSON environment variable kiritilganini tekshiring."
+        return None
 
     def add_event(
         self,
@@ -79,22 +96,12 @@ class GoogleCalendarService:
         end_time: Optional[str] = None,
         details: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Adds a new event to the primary Google Calendar.
-        
-        Args:
-            title: Title of the event
-            start_time: Start datetime string in ISO format (e.g., '2026-07-24T14:00:00')
-            end_time: Optional end datetime string in ISO format. Defaults to 1 hour after start_time.
-            details: Optional detailed description for the event.
-        """
-        try:
-            if not self.service:
-                self._authenticate()
-                if not self.service:
-                    return {"status": "error", "message": "Google Calendar avtorizatsiyasi mavjud emas. GOOGLE_TOKEN_JSON environment variable kiritilganini tekshiring."}
+        """Adds a new event to the primary Google Calendar."""
+        err = self._ensure_service()
+        if err:
+            return {"status": "error", "message": err}
 
-            # Parse start time
+        try:
             try:
                 dt_start = datetime.datetime.fromisoformat(start_time)
             except ValueError:
@@ -103,7 +110,6 @@ class GoogleCalendarService:
             if dt_start.tzinfo is None:
                 dt_start = self.tz.localize(dt_start)
 
-            # Calculate end time if not provided
             if end_time:
                 try:
                     dt_end = datetime.datetime.fromisoformat(end_time)
@@ -117,14 +123,8 @@ class GoogleCalendarService:
             event_body = {
                 "summary": title,
                 "description": details or "",
-                "start": {
-                    "dateTime": dt_start.isoformat(),
-                    "timeZone": self.timezone_str,
-                },
-                "end": {
-                    "dateTime": dt_end.isoformat(),
-                    "timeZone": self.timezone_str,
-                },
+                "start": {"dateTime": dt_start.isoformat(), "timeZone": self.timezone_str},
+                "end": {"dateTime": dt_end.isoformat(), "timeZone": self.timezone_str},
             }
 
             event = self.service.events().insert(calendarId="primary", body=event_body).execute()
@@ -144,13 +144,11 @@ class GoogleCalendarService:
             return {"status": "error", "message": f"Xatolik yuz berdi: {err}"}
 
     def get_upcoming_events(self, limit: int = 10, start_date: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Retrieves upcoming events from the primary calendar.
-        
-        Args:
-            limit: Maximum number of events to fetch (default 10)
-            start_date: Optional ISO format date to start fetching from. Defaults to now.
-        """
+        """Retrieves upcoming events from the primary calendar."""
+        err = self._ensure_service()
+        if err:
+            return {"status": "error", "message": err}
+
         try:
             if start_date:
                 try:
@@ -162,11 +160,9 @@ class GoogleCalendarService:
             else:
                 dt_start = datetime.datetime.now(self.tz)
 
-            time_min = dt_start.isoformat()
-
             events_result = self.service.events().list(
                 calendarId="primary",
-                timeMin=time_min,
+                timeMin=dt_start.isoformat(),
                 maxResults=limit,
                 singleEvents=True,
                 orderBy="startTime"
@@ -174,7 +170,6 @@ class GoogleCalendarService:
 
             events = events_result.get("items", [])
             formatted_events = []
-            
             for event in events:
                 start = event["start"].get("dateTime", event["start"].get("date"))
                 end = event["end"].get("dateTime", event["end"].get("date"))
@@ -187,11 +182,7 @@ class GoogleCalendarService:
                     "link": event.get("htmlLink")
                 })
 
-            return {
-                "status": "success",
-                "count": len(formatted_events),
-                "events": formatted_events
-            }
+            return {"status": "success", "count": len(formatted_events), "events": formatted_events}
 
         except HttpError as err:
             return {"status": "error", "message": f"Google Calendar API xatosi: {err}"}
@@ -199,9 +190,11 @@ class GoogleCalendarService:
             return {"status": "error", "message": f"Xatolik yuz berdi: {err}"}
 
     def delete_event(self, event_id: str) -> Dict[str, Any]:
-        """
-        Deletes an event from the primary calendar by ID.
-        """
+        """Deletes an event from the primary calendar by ID."""
+        err = self._ensure_service()
+        if err:
+            return {"status": "error", "message": err}
+
         try:
             self.service.events().delete(calendarId="primary", eventId=event_id).execute()
             return {
@@ -214,7 +207,8 @@ class GoogleCalendarService:
         except Exception as err:
             return {"status": "error", "message": f"Xatolik yuz berdi: {err}"}
 
-# Global singleton instance for easy import
+
+# Lazy singleton - only created when first needed, not at import time
 _calendar_instance: Optional[GoogleCalendarService] = None
 
 def get_calendar_service() -> GoogleCalendarService:

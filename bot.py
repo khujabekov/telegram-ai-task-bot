@@ -1,7 +1,6 @@
 import logging
 import os
 import tempfile
-from pathlib import Path
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
@@ -13,7 +12,6 @@ from telegram.ext import (
 )
 
 import config
-from agent import TaskAssistantAgent
 
 # Configure logging
 logging.basicConfig(
@@ -21,8 +19,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize AI Agent
-agent = TaskAssistantAgent()
+# Lazy agent initialization - NOT at module level to avoid crashing on Vercel import
+_agent = None
+
+def get_agent():
+    """Lazily initializes the TaskAssistantAgent on first use."""
+    global _agent
+    if _agent is None:
+        from agent import TaskAssistantAgent
+        _agent = TaskAssistantAgent()
+    return _agent
 
 # Custom Reply Keyboard Buttons
 KEYBOARD_TODAY = "📅 Bugungi rejalarni ko'rish"
@@ -78,15 +84,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def send_safe_message(update: Update, text: str) -> None:
-    """Sends a message trying Markdown formatting first, falling back to plain text if parsing fails."""
+    """Sends a message, falling back to plain text if Markdown parsing fails."""
     try:
         await update.message.reply_text(
             text=text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=MAIN_KEYBOARD
         )
-    except Exception as e:
-        logger.warning(f"Markdown parsing failed ({e}), falling back to plain text.")
+    except Exception:
         await update.message.reply_text(
             text=text,
             reply_markup=MAIN_KEYBOARD
@@ -110,11 +115,12 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await help_command(update, context)
         return
 
-    # Send typing action to Telegram user
+    # Send typing action
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
-    # Process prompt using Gemini Agent
+    # Process with Gemini Agent
     try:
+        agent = get_agent()
         response_text = agent.process_message(user_text)
         await send_safe_message(update, response_text)
     except Exception as e:
@@ -130,7 +136,6 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if not voice:
         return
 
-    # Notify user that bot is listening/processing
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     status_msg = await update.message.reply_text("🎙 Ovozli xabar eshitilmoqda va tahlil qilinmoqda...")
 
@@ -138,14 +143,12 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     file_path = os.path.join(temp_dir, f"voice_{voice.file_unique_id}.ogg")
 
     try:
-        # Download voice file from Telegram
         telegram_file = await context.bot.get_file(voice.file_id)
         await telegram_file.download_to_drive(file_path)
 
-        # Process voice with Gemini multimodal agent
+        agent = get_agent()
         response_text = agent.process_voice(file_path)
 
-        # Delete status message and send response
         await status_msg.delete()
         await send_safe_message(update, response_text)
 
@@ -154,30 +157,26 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await status_msg.edit_text(f"❌ Ovozli xabarni ishlashda xatolik yuz berdi: {str(e)}")
 
     finally:
-        # Clean up temporary audio file
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
             except Exception:
                 pass
 
+
 def main():
-    """Main entrypoint to start the Telegram bot."""
-    # Validate environment variables before launch
+    """Main entrypoint to start the Telegram bot in polling mode (local development)."""
     config.validate_config()
 
     print("🚀 Telegram AI Task Assistant Bot ishga tushmoqda...")
 
-    # Build python-telegram-bot application
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
 
-    # Register handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     application.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
 
-    # Run polling loop
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":

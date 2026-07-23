@@ -1,16 +1,11 @@
 import datetime
-import time
-import os
 import re
 import pytz
-from typing import Optional, List, Dict, Any
+from typing import Optional
 import google.generativeai as genai
 
 import config
 from calendar_service import get_calendar_service
-
-# Configure Gemini API key
-genai.configure(api_key=config.GEMINI_API_KEY)
 
 # --- Tool functions for Gemini Function Calling ---
 
@@ -61,53 +56,17 @@ def delete_calendar_event(event_id: str) -> str:
         return f"Xatolik: {e}"
 
 
-# --- Resolve the best available model name once at startup ---
-
-def _resolve_model_name() -> str:
-    """Finds a working Gemini model by trying the configured name, then discovering available models."""
-    configured = config.GEMINI_MODEL_NAME  # e.g. "gemini-1.5-flash"
-    
-    # Try listing available models and pick the best match
-    try:
-        available = []
-        for m in genai.list_models():
-            if "generateContent" in m.supported_generation_methods:
-                available.append(m.name)
-        
-        if available:
-            # Prefer the configured model if it's in the list
-            for name in available:
-                if configured in name:
-                    resolved = name.replace("models/", "")
-                    print(f"[Agent] Resolved model: {resolved}")
-                    return resolved
-            
-            # Otherwise pick first available gemini flash model
-            for name in available:
-                if "flash" in name:
-                    resolved = name.replace("models/", "")
-                    print(f"[Agent] Fallback model: {resolved}")
-                    return resolved
-            
-            # Last resort: first available model
-            resolved = available[0].replace("models/", "")
-            print(f"[Agent] Using first available model: {resolved}")
-            return resolved
-    except Exception as e:
-        print(f"[Agent] Could not list models ({e}), using configured: {configured}")
-    
-    return configured
-
-
 class TaskAssistantAgent:
-    MAX_RETRIES = 3
+    """Gemini AI agent that processes text and voice messages with calendar tool calling."""
 
     def __init__(self):
         self.tz = pytz.timezone(config.TIMEZONE)
         self.tools = [add_calendar_event, get_calendar_events, delete_calendar_event]
-        genai.configure(api_key=config.GEMINI_API_KEY)
-        # Resolve model once
-        self.model_name = _resolve_model_name()
+        self.model_name = config.GEMINI_MODEL_NAME  # Use configured model directly
+        
+        # Configure Gemini
+        if config.GEMINI_API_KEY:
+            genai.configure(api_key=config.GEMINI_API_KEY)
 
     def _format_error(self, e: Exception) -> str:
         error_msg = str(e)
@@ -121,14 +80,16 @@ class TaskAssistantAgent:
                 "3. .env fayliga qo'ying va botni qayta ishga tushiring."
             )
         if "429" in error_msg or "quota" in error_msg.lower():
-            # Extract retry delay if present
             retry_match = re.search(r"retry in ([\d.]+)s", error_msg, re.IGNORECASE)
             wait_hint = retry_match.group(1) if retry_match else "30"
             return (
                 f"⏳ Gemini API kvotasi tugadi. Taxminan {wait_hint} soniyadan keyin qayta urinib ko'ring.\n\n"
-                "Bepul rejada limitlar mavjud. Agar bot tez-tez ishlatilsa, "
-                "Google AI Studio'da pullik rejaga o'tish tavsiya etiladi:\n"
-                "https://ai.google.dev/gemini-api/docs/rate-limits"
+                "Bepul rejada limitlar mavjud."
+            )
+        if "404" in error_msg and "not found" in error_msg.lower():
+            return (
+                f"⚠️ Model topilmadi: {self.model_name}\n\n"
+                "GEMINI_MODEL_NAME ni tekshiring (masalan: gemini-2.0-flash)."
             )
         return f"❌ Xatolik yuz berdi: {error_msg}"
 
@@ -155,83 +116,40 @@ QOIDALAR VA YO'RIQNOMA:
    - Tadbirlar ro'yxatini ko'rsatganda sana, vaqt va sarlavhani chiroyli ro'yxat ko'rinishida taqdim eting.
 5. Noma'lum yoki tushunarsiz vaqt bo'lsa, foydalanuvchidan vaqtni aniqlashtirishni so'rang."""
 
-    def _send_with_retry(self, send_fn):
-        """Calls send_fn with automatic retry on 429 rate-limit errors."""
-        for attempt in range(1, self.MAX_RETRIES + 1):
-            try:
-                return send_fn()
-            except Exception as e:
-                error_str = str(e)
-                is_rate_limit = "429" in error_str or "quota" in error_str.lower()
-                
-                if is_rate_limit and attempt < self.MAX_RETRIES:
-                    # Extract suggested wait time
-                    retry_match = re.search(r"retry in ([\d.]+)s", error_str, re.IGNORECASE)
-                    wait_time = float(retry_match.group(1)) if retry_match else 25.0
-                    wait_time = min(wait_time + 5, 60)  # Add buffer, cap at 60s
-                    print(f"[Agent] Rate limited (attempt {attempt}/{self.MAX_RETRIES}), waiting {wait_time:.0f}s...")
-                    time.sleep(wait_time)
-                    continue
-                
-                raise e
-
-    def process_message(self, user_text: str, chat_history: list = None) -> str:
-        """Processes text messages from the user using Gemini with Tool Calling."""
+    def _create_model(self):
+        """Creates a Gemini GenerativeModel instance."""
         genai.configure(api_key=config.GEMINI_API_KEY)
-        system_instruction = self._build_system_instruction()
-        
-        model = genai.GenerativeModel(
+        return genai.GenerativeModel(
             model_name=self.model_name,
             tools=self.tools,
-            system_instruction=system_instruction
+            system_instruction=self._build_system_instruction()
         )
-        
-        chat = model.start_chat(enable_automatic_function_calling=True)
-        if chat_history:
-            chat.history = chat_history
 
+    def process_message(self, user_text: str) -> str:
+        """Processes text messages from the user using Gemini with Tool Calling."""
         try:
-            def send_fn():
-                return chat.send_message(user_text)
-            
-            response = self._send_with_retry(send_fn)
+            model = self._create_model()
+            chat = model.start_chat(enable_automatic_function_calling=True)
+            response = chat.send_message(user_text)
             return response.text
         except Exception as e:
             return self._format_error(e)
 
     def process_voice(self, audio_file_path: str) -> str:
         """Processes voice messages by sending inline audio bytes directly to Gemini."""
-        genai.configure(api_key=config.GEMINI_API_KEY)
-        system_instruction = self._build_system_instruction()
-        
-        model = genai.GenerativeModel(
-            model_name=self.model_name,
-            tools=self.tools,
-            system_instruction=system_instruction
-        )
-        
         try:
-            # Read voice file bytes for inline audio payload
             with open(audio_file_path, "rb") as f:
                 audio_bytes = f.read()
 
-            audio_part = {
-                "mime_type": "audio/ogg",
-                "data": audio_bytes
-            }
-
+            audio_part = {"mime_type": "audio/ogg", "data": audio_bytes}
             prompt = (
                 "Ushbu ovozli xabarni diqqat bilan eshit, foydalanuvchi nima so'rayotganini yoki qanday vazifa topshirayotganini aniqla. "
                 "Zarur bo'lsa kalendar tool'larini ishlat va foydalanuvchiga o'zbek tilida to'liq javob ber."
             )
-            
+
+            model = self._create_model()
             chat = model.start_chat(enable_automatic_function_calling=True)
-            
-            def send_fn():
-                return chat.send_message([audio_part, prompt])
-            
-            response = self._send_with_retry(send_fn)
+            response = chat.send_message([audio_part, prompt])
             return response.text
-            
         except Exception as e:
             return self._format_error(e)
