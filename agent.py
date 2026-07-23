@@ -81,10 +81,10 @@ class TaskAssistantAgent:
             )
         if "429" in error_msg or "quota" in error_msg.lower():
             retry_match = re.search(r"retry in ([\d.]+)s", error_msg, re.IGNORECASE)
-            wait_hint = retry_match.group(1) if retry_match else "30"
+            wait_hint = str(int(float(retry_match.group(1)))) if retry_match else "30"
             return (
-                f"⏳ Gemini API kvotasi tugadi. Taxminan {wait_hint} soniyadan keyin qayta urinib ko'ring.\n\n"
-                "Bepul rejada limitlar mavjud."
+                f"⏳ Gemini API kvotasi vaqtincha to'ldi. Taxminan {wait_hint} soniyadan keyin qayta urinib ko'ring.\n\n"
+                "💡 Bepul tarifda 1 daqiqada maksimal 15 marta so'rov yuborish mumkin."
             )
         if "404" in error_msg and "not found" in error_msg.lower():
             return (
