@@ -1,0 +1,20 @@
+# Credentials & Secret Files (DO NOT PUSH TO GITHUB)
+.env
+credentials.json
+token.json
+
+# Python Virtual Environment
+venv/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
