@@ -26,12 +26,12 @@ def add_calendar_event(title: str, start_time: str, end_time: str = None, detail
     except Exception as e:
         return f"Xatolik: {e}"
 
-def get_calendar_events(limit: int = 10, start_date: str = None) -> str:
+def get_calendar_events(limit: int = 5, start_date: str = None) -> str:
     """
     Google Kalendardagi bo'lajak tadbir va rejalarni oladi.
     
     Args:
-        limit: Qaytariladigan tadbirlar soni (standart 10).
+        limit: Qaytariladigan tadbirlar soni (standart 5).
         start_date: Qaysi sanadan boshlab qidirish kerakligi ISO formatida (masalan: '2026-07-24T00:00:00').
     """
     try:
@@ -98,31 +98,26 @@ class TaskAssistantAgent:
         now = datetime.datetime.now(self.tz)
         now_str = now.strftime("%Y-%m-%d %H:%M:%S (%A)")
         
-        return f"""Siz — Telegram'dagi aqlli AI Vazifalar Yordamchisisiz (AI Task Assistant).
-Siz foydalanuvchilarning matnli va ovozli xabarlarini tushunasiz hamda ularning Google Kalendarini boshqarasiz.
-
-Hozirgi aniq vaqt va sana (Toshkent vaqti): {now_str}
-
-QOIDALAR VA YO'RIQNOMA:
-1. Muloqot tili: Doimo muloyim, aniq va do'stona O'ZBEK tilida javob bering.
-2. Vaqtni hisoblash: Foydalanuvchi "bugun", "ertaga", "indinga", "kelasi dushanba", "soat 3 da", "kechqurun 8 da" kabi iboralarni ishlatsa, hozirgi vaqt ({now_str}) asosida aniq ISO formatdagi sana va vaqtni hisoblab chiqing va mos funksiyaga bering.
-3. Asosiy buyruqlar va Tool'lar:
-   - Yangi reja/vazifa qo'shish so'ralganda -> add_calendar_event tool'ini chaqiring.
-   - Rejalar/tadbirlarni ko'rish so'ralganda -> get_calendar_events tool'ini chaqiring.
-   - Tadbirni o'chirish so'ralganda -> delete_calendar_event tool'ini chaqiring.
-4. Natijani rasmiylashtirish:
-   - Javobingizda chiroyli emoji ishlatishingiz mumkin.
-   - Telegram Markdown maxsus belgilardan (* _ ` [ ]) foydalanmang, oddiy matn yozing.
-   - Tadbirlar ro'yxatini ko'rsatganda sana, vaqt va sarlavhani chiroyli ro'yxat ko'rinishida taqdim eting.
-5. Noma'lum yoki tushunarsiz vaqt bo'lsa, foydalanuvchidan vaqtni aniqlashtirishni so'rang."""
+        return (
+            f"Siz Google Kalendarni boshqaruvchi Telegram AI yordamchisiz. Vaqt: {now_str}.\n"
+            "Qoidalar:\n"
+            "1. Doimo o'zbek tilida, ixcham va aniq javob bering.\n"
+            "2. Vaqtlarni ISO formatga o'girib, kalendar tool'larini ishlatiring.\n"
+            "3. Telegram markdown belgilardan (*, _, `) foydalanmang."
+        )
 
     def _create_model(self):
-        """Creates a Gemini GenerativeModel instance."""
+        """Creates a Gemini GenerativeModel instance with token optimization."""
         genai.configure(api_key=config.GEMINI_API_KEY)
+        generation_config = {
+            "max_output_tokens": 300,
+            "temperature": 0.2
+        }
         return genai.GenerativeModel(
             model_name=self.model_name,
             tools=self.tools,
-            system_instruction=self._build_system_instruction()
+            system_instruction=self._build_system_instruction(),
+            generation_config=generation_config
         )
 
     def process_message(self, user_text: str) -> str:
@@ -142,10 +137,7 @@ QOIDALAR VA YO'RIQNOMA:
                 audio_bytes = f.read()
 
             audio_part = {"mime_type": "audio/ogg", "data": audio_bytes}
-            prompt = (
-                "Ushbu ovozli xabarni diqqat bilan eshit, foydalanuvchi nima so'rayotganini yoki qanday vazifa topshirayotganini aniqla. "
-                "Zarur bo'lsa kalendar tool'larini ishlat va foydalanuvchiga o'zbek tilida to'liq javob ber."
-            )
+            prompt = "Ovozli xabarni tushunib, kerakli kalendar tool'ini chaqiring va o'zbekcha javob bering."
 
             model = self._create_model()
             chat = model.start_chat(enable_automatic_function_calling=True)

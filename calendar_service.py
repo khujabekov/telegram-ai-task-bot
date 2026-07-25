@@ -172,15 +172,14 @@ class GoogleCalendarService:
             formatted_events = []
             for event in events:
                 start = event["start"].get("dateTime", event["start"].get("date"))
-                end = event["end"].get("dateTime", event["end"].get("date"))
-                formatted_events.append({
+                item = {
                     "id": event["id"],
-                    "summary": event.get("summary", "Sarlavhasiz"),
-                    "start": start,
-                    "end": end,
-                    "description": event.get("description", ""),
-                    "link": event.get("htmlLink")
-                })
+                    "title": event.get("summary", "Sarlavhasiz"),
+                    "start": start
+                }
+                if event.get("description"):
+                    item["details"] = event["description"]
+                formatted_events.append(item)
 
             return {"status": "success", "count": len(formatted_events), "events": formatted_events}
 
