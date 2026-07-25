@@ -99,19 +99,22 @@ class TaskAssistantAgent:
         now_str = now.strftime("%Y-%m-%d %H:%M:%S (%A)")
         
         return (
-            f"Siz Google Kalendarni boshqaruvchi Telegram AI yordamchisiz. Vaqt: {now_str}.\n"
+            f"Siz Google Kalendarni boshqaruvchi Telegram AI yordamchisiz. Hozirgi vaqt: {now_str}.\n"
             "Qoidalar:\n"
-            "1. Doimo o'zbek tilida, ixcham va aniq javob bering.\n"
-            "2. Vaqtlarni ISO formatga o'girib, kalendar tool'larini ishlatiring.\n"
+            "1. Doimo o'zbek tilida muloyim, ixcham va aniq javob bering.\n"
+            "2. Kalendar vazifalarini bajarishda mos tool'larni chaqiring:\n"
+            "   - Yangi reja: add_calendar_event(title, start_time, end_time, details)\n"
+            "   - Rejalarni ko'rish: get_calendar_events(limit, start_date)\n"
+            "   - Rejani o'chirish: delete_calendar_event(event_id)\n"
             "3. Telegram markdown belgilardan (*, _, `) foydalanmang."
         )
 
     def _create_model(self):
-        """Creates a Gemini GenerativeModel instance with token optimization."""
+        """Creates a Gemini GenerativeModel instance."""
         genai.configure(api_key=config.GEMINI_API_KEY)
         generation_config = {
-            "max_output_tokens": 300,
-            "temperature": 0.2
+            "temperature": 0.2,
+            "max_output_tokens": 1000
         }
         return genai.GenerativeModel(
             model_name=self.model_name,
