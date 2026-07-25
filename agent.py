@@ -55,13 +55,61 @@ def delete_calendar_event(event_id: str) -> str:
     except Exception as e:
         return f"Xatolik: {e}"
 
+def add_task(title: str, due_date: str = None, notes: str = None) -> str:
+    """
+    Google Tasks-ga (vazifalar ro'yxatiga) yangi oddiy vazifa (to-do) qo'shadi.
+    
+    Args:
+        title: Vazifa nomi yoki tavsifi (masalan: 'Kitob o'qish' yoki 'Sut sotib olish').
+        due_date: Qoshimcha bajarilish sanasi ISO formatida (masalan: '2026-07-26T18:00:00').
+        notes: Vazifa bo'yicha qoshimcha izoh.
+    """
+    try:
+        service = get_calendar_service()
+        result = service.add_task(title, due_date, notes)
+        return str(result)
+    except Exception as e:
+        return f"Xatolik: {e}"
+
+def get_tasks(limit: int = 5, show_completed: bool = False) -> str:
+    """
+    Google Tasks-dagi bajarilishi kerak bo'lgan vazifalar ro'yxatini oladi.
+    
+    Args:
+        limit: Qaytariladigan vazifalar soni (standart 5).
+        show_completed: Bajarilgan vazifalarni ham ko'rsatish (standart False).
+    """
+    try:
+        service = get_calendar_service()
+        result = service.get_tasks(limit=limit, show_completed=show_completed)
+        return str(result)
+    except Exception as e:
+        return f"Xatolik: {e}"
+
+def complete_task(task_id: str) -> str:
+    """
+    Google Tasks-dagi vazifani bajarildi (Done) deb belgilaydi.
+    
+    Args:
+        task_id: Bajarilgan deb belgilanishi kerak bo'lgan vazifaning ID kodi.
+    """
+    try:
+        service = get_calendar_service()
+        result = service.complete_task(task_id)
+        return str(result)
+    except Exception as e:
+        return f"Xatolik: {e}"
+
 
 class TaskAssistantAgent:
-    """Gemini AI agent that processes text and voice messages with calendar tool calling."""
+    """Gemini AI agent that processes text and voice messages with calendar & tasks tool calling."""
 
     def __init__(self):
         self.tz = pytz.timezone(config.TIMEZONE)
-        self.tools = [add_calendar_event, get_calendar_events, delete_calendar_event]
+        self.tools = [
+            add_calendar_event, get_calendar_events, delete_calendar_event,
+            add_task, get_tasks, complete_task
+        ]
         self.model_name = config.GEMINI_MODEL_NAME  # Use configured model directly
         
         # Configure Gemini
@@ -99,13 +147,12 @@ class TaskAssistantAgent:
         now_str = now.strftime("%Y-%m-%d %H:%M:%S (%A)")
         
         return (
-            f"Siz Google Kalendarni boshqaruvchi Telegram AI yordamchisiz. Hozirgi vaqt: {now_str}.\n"
+            f"Siz Google Kalendar va Google Tasks-ni boshqaruvchi Telegram AI yordamchisiz. Vaqt: {now_str}.\n"
             "Qoidalar:\n"
             "1. Doimo o'zbek tilida muloyim, ixcham va aniq javob bering.\n"
-            "2. Kalendar vazifalarini bajarishda mos tool'larni chaqiring:\n"
-            "   - Yangi reja: add_calendar_event(title, start_time, end_time, details)\n"
-            "   - Rejalarni ko'rish: get_calendar_events(limit, start_date)\n"
-            "   - Rejani o'chirish: delete_calendar_event(event_id)\n"
+            "2. Mos tool'larni chaqiring:\n"
+            "   - Aniq vaqtli tadbir/majlis: add_calendar_event, get_calendar_events, delete_calendar_event\n"
+            "   - Oddiy vazifa/To-Do list: add_task(title, due_date, notes), get_tasks(limit, show_completed), complete_task(task_id)\n"
             "3. Telegram markdown belgilardan (*, _, `) foydalanmang."
         )
 

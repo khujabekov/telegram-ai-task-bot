@@ -18,10 +18,11 @@ class GoogleCalendarService:
         self.tz = pytz.timezone(self.timezone_str)
         self.creds: Optional[Credentials] = None
         self.service = None
+        self.tasks_service = None
         self._authenticate()
 
     def _authenticate(self):
-        """Authenticates with Google Calendar API using OAuth2 (supports local file & cloud env vars)."""
+        """Authenticates with Google Calendar & Tasks API using OAuth2."""
         token_path = str(config.GOOGLE_TOKEN_FILE)
 
         # 1. Try loading token from GOOGLE_TOKEN_JSON environment variable (Vercel/Render/cloud)
@@ -74,12 +75,24 @@ class GoogleCalendarService:
             except Exception:
                 pass  # Read-only filesystem on Vercel - ignore
 
-        # 6. Build calendar service
-        if self.creds and self.creds.valid:
-            self.service = build("calendar", "v3", credentials=self.creds)
-        elif self.creds:
-            # Token might be refreshable on first API call
-            self.service = build("calendar", "v3", credentials=self.creds)
+        # 6. Build calendar & tasks services
+        if self.creds:
+            try:
+                self.service = build("calendar", "v3", credentials=self.creds)
+            except Exception as e:
+                print(f"[Calendar] Service build error: {e}")
+            try:
+                self.tasks_service = build("tasks", "v1", credentials=self.creds)
+            except Exception as e:
+                print(f"[Tasks] Service build error: {e}")
+
+    def _ensure_tasks_service(self) -> Optional[str]:
+        """Ensures tasks service is ready. Returns error message if not."""
+        if not self.tasks_service:
+            self._authenticate()
+            if not self.tasks_service:
+                return "Google Tasks API xizmati tayyor emas. OAuth ruxsatlarini tekshiring."
+        return None
 
     def _ensure_service(self) -> Optional[str]:
         """Ensures calendar service is ready. Returns error message if not."""
@@ -203,6 +216,94 @@ class GoogleCalendarService:
             }
         except HttpError as err:
             return {"status": "error", "message": f"O'chirishda Google Calendar API xatosi: {err}"}
+        except Exception as err:
+            return {"status": "error", "message": f"Xatolik yuz berdi: {err}"}
+
+    # --- Google Tasks Methods ---
+
+    def add_task(self, title: str, due_date: Optional[str] = None, notes: Optional[str] = None) -> Dict[str, Any]:
+        """Adds a new task to Google Tasks."""
+        err = self._ensure_tasks_service()
+        if err:
+            return {"status": "error", "message": err}
+
+        try:
+            task_body: Dict[str, Any] = {"title": title}
+            if notes:
+                task_body["notes"] = notes
+            if due_date:
+                try:
+                    dt = datetime.datetime.fromisoformat(due_date)
+                    if dt.tzinfo is None:
+                        dt = self.tz.localize(dt)
+                    task_body["due"] = dt.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                except ValueError:
+                    pass
+
+            result = self.tasks_service.tasks().insert(tasklist="@default", body=task_body).execute()
+            return {
+                "status": "success",
+                "task_id": result.get("id"),
+                "title": result.get("title"),
+                "message": f"✅ '{title}' vazifalar ro'yxatiga qo'shildi!"
+            }
+        except HttpError as err:
+            return {"status": "error", "message": f"Google Tasks API xatosi: {err}"}
+        except Exception as err:
+            return {"status": "error", "message": f"Xatolik yuz berdi: {err}"}
+
+    def get_tasks(self, limit: int = 5, show_completed: bool = False) -> Dict[str, Any]:
+        """Retrieves tasks from Google Tasks."""
+        err = self._ensure_tasks_service()
+        if err:
+            return {"status": "error", "message": err}
+
+        try:
+            result = self.tasks_service.tasks().list(
+                tasklist="@default",
+                showCompleted=show_completed,
+                maxResults=limit
+            ).execute()
+
+            items = result.get("items", [])
+            formatted_tasks = []
+            for item in items:
+                task_dict = {
+                    "id": item["id"],
+                    "title": item.get("title", "Nomsiz vazifa"),
+                    "status": item.get("status", "needsAction")
+                }
+                if item.get("due"):
+                    task_dict["due"] = item["due"]
+                if item.get("notes"):
+                    task_dict["notes"] = item["notes"]
+                formatted_tasks.append(task_dict)
+
+            return {"status": "success", "count": len(formatted_tasks), "tasks": formatted_tasks}
+        except HttpError as err:
+            return {"status": "error", "message": f"Google Tasks API xatosi: {err}"}
+        except Exception as err:
+            return {"status": "error", "message": f"Xatolik yuz berdi: {err}"}
+
+    def complete_task(self, task_id: str) -> Dict[str, Any]:
+        """Marks a Google Task as completed."""
+        err = self._ensure_tasks_service()
+        if err:
+            return {"status": "error", "message": err}
+
+        try:
+            result = self.tasks_service.tasks().patch(
+                tasklist="@default",
+                task=task_id,
+                body={"status": "completed"}
+            ).execute()
+            return {
+                "status": "success",
+                "task_id": task_id,
+                "message": f"✅ '{result.get('title', task_id)}' vazifasi bajarildi deb belgilandi!"
+            }
+        except HttpError as err:
+            return {"status": "error", "message": f"Google Tasks API xatosi: {err}"}
         except Exception as err:
             return {"status": "error", "message": f"Xatolik yuz berdi: {err}"}
 

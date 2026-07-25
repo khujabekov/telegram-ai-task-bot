@@ -44,5 +44,8 @@ def validate_config():
             "Please copy .env.example to .env and fill in your API credentials."
         )
 
-# Google Calendar OAuth Scopes
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+# Google OAuth Scopes (Calendar & Tasks)
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks"
+]
