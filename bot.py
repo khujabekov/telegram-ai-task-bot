@@ -1,6 +1,8 @@
 import logging
 import os
 import tempfile
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
@@ -18,6 +20,35 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler to satisfy Render.com health check requirements."""
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"<html><body><h1>Bot is active and running!</h1></body></html>")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Silence routine HTTP request logging
+
+def start_health_check_server():
+    """Starts a lightweight HTTP server in a background thread if PORT env var is present (e.g. Render)."""
+    port_env = os.getenv("PORT")
+    if not port_env:
+        return
+    try:
+        port = int(port_env)
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(f"🌐 Render Health Check HTTP Server active on port {port}")
+    except Exception as e:
+        logger.error(f"❌ Failed to start Health Check Server: {e}")
 
 # Lazy agent initialization - NOT at module level to avoid crashing on Vercel import
 _agent = None
@@ -165,8 +196,11 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 def main():
-    """Main entrypoint to start the Telegram bot in polling mode (local development)."""
+    """Main entrypoint to start the Telegram bot in polling mode."""
     config.validate_config()
+
+    # Start background HTTP server for Render.com health check
+    start_health_check_server()
 
     print("🚀 Telegram AI Task Assistant Bot ishga tushmoqda...")
 
