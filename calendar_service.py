@@ -30,7 +30,7 @@ class GoogleCalendarService:
         if token_env:
             try:
                 info = json.loads(token_env)
-                self.creds = Credentials.from_authorized_user_info(info, self.scopes)
+                self.creds = Credentials.from_authorized_user_info(info)
             except Exception as e:
                 print(f"[Calendar] Failed to load token from GOOGLE_TOKEN_JSON env: {e}")
                 self.creds = None
@@ -38,7 +38,7 @@ class GoogleCalendarService:
         # 2. Try loading token from local token.json file
         if not self.creds and os.path.exists(token_path):
             try:
-                self.creds = Credentials.from_authorized_user_file(token_path, self.scopes)
+                self.creds = Credentials.from_authorized_user_file(token_path)
             except Exception as e:
                 print(f"[Calendar] Failed to load token.json: {e}")
                 self.creds = None
