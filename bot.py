@@ -115,18 +115,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def send_safe_message(update: Update, text: str) -> None:
-    """Sends a message, falling back to plain text if Markdown parsing fails."""
-    try:
-        await update.message.reply_text(
-            text=text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=MAIN_KEYBOARD
-        )
-    except Exception:
-        await update.message.reply_text(
-            text=text,
-            reply_markup=MAIN_KEYBOARD
-        )
+    """Sends a message as plain text with the main reply keyboard.
+    
+    System instruction tells Gemini not to use Markdown, so we send plain text
+    directly — avoiding an unnecessary Markdown parse attempt and fallback.
+    """
+    await update.message.reply_text(
+        text=text,
+        reply_markup=MAIN_KEYBOARD
+    )
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles incoming text messages from the user."""

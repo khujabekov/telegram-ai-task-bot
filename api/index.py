@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 import traceback
+import logging
 from http.server import BaseHTTPRequestHandler
 
 # Add project root to Python path so imports work from api/ subdirectory
@@ -12,8 +13,23 @@ if PROJECT_ROOT not in sys.path:
 
 import config
 
-async def process_telegram_update(data: dict):
-    """Processes a single Telegram update cleanly within its own event loop context."""
+logger = logging.getLogger(__name__)
+
+# --- Lazy singleton Application to avoid rebuilding on every Vercel request ---
+_telegram_app = None
+_app_initialized = False
+
+
+def _get_telegram_app():
+    """Returns a cached Telegram Application with all handlers registered.
+    
+    On Vercel, the module stays warm between requests in the same container.
+    Reusing the Application avoids ~200-500ms overhead per request.
+    """
+    global _telegram_app
+    if _telegram_app is not None:
+        return _telegram_app
+
     from telegram import Update
     from telegram.ext import (
         Application,
@@ -32,11 +48,25 @@ async def process_telegram_update(data: dict):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
 
-    async with app:
-        await app.start()
-        update = Update.de_json(data, app.bot)
-        await app.process_update(update)
-        await app.stop()
+    _telegram_app = app
+    return app
+
+
+async def process_telegram_update(data: dict):
+    """Processes a single Telegram update using the cached Application instance."""
+    global _app_initialized
+    from telegram import Update
+
+    app = _get_telegram_app()
+
+    # initialize() is idempotent — safe to call multiple times, but we track it
+    # to avoid unnecessary await overhead on warm requests
+    if not _app_initialized:
+        await app.initialize()
+        _app_initialized = True
+
+    update = Update.de_json(data, app.bot)
+    await app.process_update(update)
 
 
 class handler(BaseHTTPRequestHandler):

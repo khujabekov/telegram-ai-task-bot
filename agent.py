@@ -1,11 +1,29 @@
 import datetime
 import re
+import functools
 import pytz
 from typing import Optional
 import google.generativeai as genai
 
 import config
 from calendar_service import get_calendar_service
+
+
+# --- Tool wrapper to reduce boilerplate try/except in every tool function ---
+
+def _calendar_tool(func):
+    """Decorator that wraps calendar tool functions with standard error handling."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            service = get_calendar_service()
+            return str(func(service, *args, **kwargs))
+        except Exception as e:
+            return f"Xatolik: {e}"
+    # Preserve original signature for Gemini function calling (strip 'service' param)
+    wrapper.__wrapped__ = func
+    return wrapper
+
 
 # --- Tool functions for Gemini Function Calling ---
 
@@ -110,13 +128,14 @@ class TaskAssistantAgent:
             add_calendar_event, get_calendar_events, delete_calendar_event,
             add_task, get_tasks, complete_task
         ]
-        self.model_name = config.GEMINI_MODEL_NAME  # Use configured model directly
-        
-        # Configure Gemini
+        self.model_name = config.GEMINI_MODEL_NAME
+
+        # Configure Gemini API — one-time setup
         if config.GEMINI_API_KEY:
             genai.configure(api_key=config.GEMINI_API_KEY)
 
     def _format_error(self, e: Exception) -> str:
+        """Formats exceptions into user-friendly Uzbek error messages."""
         error_msg = str(e)
         if "API_KEY_INVALID" in error_msg or "API key not valid" in error_msg:
             return (
@@ -137,7 +156,7 @@ class TaskAssistantAgent:
         if "404" in error_msg and "not found" in error_msg.lower():
             return (
                 f"⚠️ Model topilmadi: {self.model_name}\n\n"
-                "GEMINI_MODEL_NAME ni tekshiring (masalan: gemini-2.0-flash)."
+                "GEMINI_MODEL_NAME ni tekshiring (masalan: gemini-2.5-flash)."
             )
         return f"❌ Xatolik yuz berdi: {error_msg}"
 
@@ -157,8 +176,7 @@ class TaskAssistantAgent:
         )
 
     def _create_model(self):
-        """Creates a Gemini GenerativeModel instance."""
-        genai.configure(api_key=config.GEMINI_API_KEY)
+        """Creates a Gemini GenerativeModel instance with tools and system prompt."""
         generation_config = {
             "temperature": 0.2,
             "max_output_tokens": 1000

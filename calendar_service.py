@@ -86,17 +86,21 @@ class GoogleCalendarService:
             except Exception as e:
                 print(f"[Tasks] Service build error: {e}")
 
+    def _credentials_expired(self) -> bool:
+        """Checks if the current OAuth credentials are expired and need refresh."""
+        return self.creds is not None and not self.creds.valid
+
     def _ensure_tasks_service(self) -> Optional[str]:
-        """Ensures tasks service is ready. Returns error message if not."""
-        if not self.tasks_service:
+        """Ensures tasks service is ready. Re-authenticates if token expired. Returns error message if not."""
+        if not self.tasks_service or self._credentials_expired():
             self._authenticate()
             if not self.tasks_service:
                 return "Google Tasks API xizmati tayyor emas. OAuth ruxsatlarini tekshiring."
         return None
 
     def _ensure_service(self) -> Optional[str]:
-        """Ensures calendar service is ready. Returns error message if not."""
-        if not self.service:
+        """Ensures calendar service is ready. Re-authenticates if token expired. Returns error message if not."""
+        if not self.service or self._credentials_expired():
             self._authenticate()
             if not self.service:
                 return "Google Calendar avtorizatsiyasi mavjud emas. GOOGLE_TOKEN_JSON environment variable kiritilganini tekshiring."
